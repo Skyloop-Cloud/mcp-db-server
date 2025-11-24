@@ -5,9 +5,11 @@ An MCP server that exposes relational databases to AI agents with natural langua
 """
 
 import os
+import sys
 import logging
 from typing import Dict, List, Any, Optional
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,11 +20,25 @@ try:
     from .nl_to_sql import NLToSQLConverter
 except ImportError:
     # Fallback for direct execution
-    import sys
-    import os
     sys.path.insert(0, os.path.dirname(__file__))
     from db import DatabaseManager, get_db_manager
     from nl_to_sql import NLToSQLConverter
+
+# Import FastMCP instance from mcp_server.py for MCP protocol endpoints
+try:
+    # Add parent directory to path to import mcp_server
+    parent_dir = Path(__file__).parent.parent
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+    
+    # Import the FastMCP instance and initialization function
+    from mcp_server import mcp, initialize_database
+    MCP_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"FastMCP not available: {e}. MCP protocol endpoints (/mcp, /sse) will not be available.")
+    MCP_AVAILABLE = False
+    mcp = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +84,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize NL converter: {e}")
         nl_converter = None
     
+    # Initialize FastMCP database connection if available
+    if MCP_AVAILABLE and mcp is not None:
+        try:
+            await initialize_database()
+            logger.info("FastMCP database initialized for MCP protocol endpoints")
+        except Exception as e:
+            logger.warning(f"Failed to initialize FastMCP database: {e}. MCP endpoints may not work correctly.")
+    
     yield
     
     # Shutdown
@@ -89,6 +113,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount FastMCP HTTP endpoints for MCP protocol support (/mcp and /sse)
+if MCP_AVAILABLE and mcp is not None:
+    try:
+        # Mount streamable HTTP app at /mcp
+        mcp_http_app = mcp.streamable_http_app()
+        app.mount("/mcp", mcp_http_app)
+        logger.info("Mounted FastMCP streamable HTTP endpoint at /mcp")
+        
+        # Mount SSE app at /sse
+        mcp_sse_app = mcp.sse_app()
+        app.mount("/sse", mcp_sse_app)
+        logger.info("Mounted FastMCP SSE endpoint at /sse")
+    except Exception as e:
+        logger.error(f"Failed to mount FastMCP endpoints: {e}")
+        logger.warning("MCP protocol endpoints (/mcp, /sse) will not be available")
+else:
+    logger.warning("FastMCP not available. MCP protocol endpoints (/mcp, /sse) will not be available")
 
 @app.get("/health")
 async def health_check():
