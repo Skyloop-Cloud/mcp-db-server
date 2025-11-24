@@ -117,15 +117,17 @@ app.add_middleware(
 # Mount FastMCP HTTP endpoints for MCP protocol support (/mcp and /sse)
 if MCP_AVAILABLE and mcp is not None:
     try:
-        # Mount streamable HTTP app at /mcp
+        # Mount streamable HTTP app at /mcp (support trailing slash variant)
         mcp_http_app = mcp.streamable_http_app()
         app.mount("/mcp", mcp_http_app)
-        logger.info("Mounted FastMCP streamable HTTP endpoint at /mcp")
+        app.mount("/mcp/", mcp_http_app)
+        logger.info("Mounted FastMCP streamable HTTP endpoint at /mcp (with and without trailing slash)")
         
-        # Mount SSE app at /sse
+        # Mount SSE app at /sse (support trailing slash variant)
         mcp_sse_app = mcp.sse_app()
         app.mount("/sse", mcp_sse_app)
-        logger.info("Mounted FastMCP SSE endpoint at /sse")
+        app.mount("/sse/", mcp_sse_app)
+        logger.info("Mounted FastMCP SSE endpoint at /sse (with and without trailing slash)")
     except Exception as e:
         logger.error(f"Failed to mount FastMCP endpoints: {e}")
         logger.warning("MCP protocol endpoints (/mcp, /sse) will not be available")
